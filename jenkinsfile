@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_HUB_USER = 'thevyanshuu' 
+        IMAGE_NAME = 'my-python-app'
+        K8S_MASTER = 'ubuntu@54.174.176.118'  
+        GIT_REPO = 'https://github.com/divyaanshu0/zoos-project.git'  
+    }
+
+    stages {
+        stage('Clone Repository') {
+            steps {
+                script {
+                    git branch: 'main', url: GIT_REPO 
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def IMAGE_TAG = sh(script: "date +%s", returnStdout: true).trim()
+                    env.IMAGE_TAG = IMAGE_TAG
+                    sh "docker build -t $DOCKER_HUB_USER/$IMAGE_NAME:$IMAGE_TAG ."
+                }
+            }
+        }
+
+        stage('Push Image to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: '433e290a-5f56-4a46-989b-2be219191f0a', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    script {
+                        sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                        sh "docker push $DOCKER_HUB_USER/$IMAGE_NAME:$IMAGE_TAG"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no $K8S_MASTER '
+                    sudo kubectl set image deployment/python-app python-app=$DOCKER_HUB_USER/$IMAGE_NAME:$IMAGE_TAG --namespace=default
+                    sudo kubectl rollout status deployment/python-app --namespace=default'
+                    """
+                }
+            }
+        }
+
+        stage('Clean Up Docker Image') {
+            steps {
+                script {
+                    sh "docker rmi -f $DOCKER_HUB_USER/$IMAGE_NAME:$IMAGE_TAG"
+                }
+            }
+        }
+    }
+}
